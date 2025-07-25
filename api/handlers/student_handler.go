@@ -25,13 +25,19 @@ func NewStudentHandler(s *services.StudentService) *StudentHandler {
 // POST /students
 func (h *StudentHandler) CreateStudentHandler(w http.ResponseWriter, r *http.Request) {
 	var student models.Student
+	// Não precisamos mais da matrícula no JSON de entrada, o serviço a gerará.
+	// No entanto, precisamos do nome, ano e AGORA O TURNO (shift).
 	if err := json.NewDecoder(r.Body).Decode(&student); err != nil {
 		http.Error(w, "Requisição inválida: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	// O serviço agora validará e gerará a matrícula.
 	if err := h.service.CreateStudent(&student); err != nil {
 		log.Printf("Erro ao criar aluno no serviço: %v", err)
+		// Aqui, você pode refinar o tratamento de erro para retornar 400 Bad Request
+		// se o erro for de validação (ex: turno inválido).
+		// Por enquanto, manteremos 500 para simplicidade, mas um tratamento mais granular seria melhor.
 		http.Error(w, "Erro ao criar aluno: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -122,7 +128,7 @@ func (h *StudentHandler) DeleteStudentHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNoContent) // 204 No Content para deleção bem-sucedida
+	w.WriteHeader(http.StatusNoContent) // 204 No Content
 }
 
 // AddSubjectToStudentHandler lida com a adição de uma matéria a um aluno.

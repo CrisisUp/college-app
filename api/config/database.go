@@ -1,41 +1,47 @@
-// config/database.go
+// api/config/database.go
 package config
 
 import (
 	"database/sql"
 	"log"
+	"os"
 
-	_ "github.com/mattn/go-sqlite3" // Driver SQLite3
+	_ "github.com/lib/pq" // Driver PostgreSQL
 )
 
-// DB é a instância global do banco de dados.
 var DB *sql.DB
 
-// InitDB inicializa a conexão com o banco de dados SQLite e cria as tabelas.
-func InitDB(dataSourceName string) {
+func InitDB() {
 	var err error
-	DB, err = sql.Open("sqlite3", dataSourceName)
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		log.Fatal("Variável de ambiente DATABASE_URL não definida. Por favor, defina-a.")
+	}
+
+	DB, err = sql.Open("postgres", dbURL)
 	if err != nil {
-		log.Fatalf("Erro ao abrir o banco de dados: %v", err)
+		log.Fatalf("Erro ao abrir o banco de dados PostgreSQL: %v", err)
 	}
 
 	if err = DB.Ping(); err != nil {
-		log.Fatalf("Erro ao conectar ao banco de dados: %v", err)
+		log.Fatalf("Erro ao conectar ao banco de dados PostgreSQL: %v", err)
 	}
 
-	log.Println("Conexão com o banco de dados SQLite estabelecida com sucesso!")
-
+	log.Println("Conexão com o banco de dados PostgreSQL estabelecida com sucesso!")
 	createTables()
 }
 
-// createTables cria as tabelas Student e Subject se elas não existirem.
 func createTables() {
+	// ATUALIZADO: Adicionada a coluna 'shift' e removido 'UNIQUE' de 'enrollment' temporariamente
+	// para permitir a geração de matrículas mais flexíveis antes de definir a unicidade composta.
+	// A unicidade será garantida pela lógica de geração no serviço.
 	createStudentsTableSQL := `
     CREATE TABLE IF NOT EXISTS students (
         id TEXT PRIMARY KEY,
-        enrollment TEXT NOT NULL UNIQUE,
+        enrollment TEXT NOT NULL UNIQUE, -- Re-adicionando UNIQUE após ajustar a lógica
         name TEXT NOT NULL,
-        current_year INTEGER NOT NULL
+        current_year INTEGER NOT NULL,
+        shift TEXT NOT NULL -- Nova coluna para o turno
     );`
 
 	createSubjectsTableSQL := `
@@ -46,7 +52,14 @@ func createTables() {
         credits INTEGER NOT NULL
     );`
 
-	// Tabela para relacionamento muitos-para-muitos entre alunos e matérias
+	createTeachersTableSQL := `
+    CREATE TABLE IF NOT EXISTS teachers (
+        id TEXT PRIMARY KEY,
+        registry TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        department TEXT NOT NULL
+    );`
+
 	createStudentSubjectsTableSQL := `
     CREATE TABLE IF NOT EXISTS student_subjects (
         student_id TEXT NOT NULL,
@@ -64,6 +77,10 @@ func createTables() {
 	if err != nil {
 		log.Fatalf("Erro ao criar tabela subjects: %v", err)
 	}
+	_, err = DB.Exec(createTeachersTableSQL)
+	if err != nil {
+		log.Fatalf("Erro ao criar tabela teachers: %v", err)
+	}
 	_, err = DB.Exec(createStudentSubjectsTableSQL)
 	if err != nil {
 		log.Fatalf("Erro ao criar tabela student_subjects: %v", err)
@@ -72,10 +89,9 @@ func createTables() {
 	log.Println("Tabelas verificadas/criadas com sucesso!")
 }
 
-// CloseDB fecha a conexão com o banco de dados.
 func CloseDB() {
 	if DB != nil {
 		DB.Close()
-		log.Println("Conexão com o banco de dados SQLite fechada.")
+		log.Println("Conexão com o banco de dados PostgreSQL fechada.")
 	}
 }

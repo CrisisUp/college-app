@@ -1,4 +1,4 @@
-// services/student_service.go
+// api/services/student_service.go
 package services
 
 import (
@@ -6,48 +6,60 @@ import (
 	"college_api/repositories"
 	"errors"
 	"fmt"
+	"log"
+	"strconv"
+	"strings"
+	"time"
 )
 
-// StudentService define a interface para as operações de serviço de alunos.
+// StudentService define as operações de negócio para alunos.
 type StudentService struct {
 	studentRepo *repositories.StudentRepository
-	subjectRepo *repositories.SubjectRepository // Para validar matérias
+	subjectRepo *repositories.SubjectRepository
 }
 
 // NewStudentService cria uma nova instância de StudentService.
-func NewStudentService(sr *repositories.StudentRepository, subjR *repositories.SubjectRepository) *StudentService {
-	return &StudentService{
-		studentRepo: sr,
-		subjectRepo: subjR,
-	}
+func NewStudentService(sr *repositories.StudentRepository, subR *repositories.SubjectRepository) *StudentService {
+	return &StudentService{studentRepo: sr, subjectRepo: subR}
 }
 
-// CreateStudent adiciona um novo aluno após validações.
+// CreateStudent cria um novo aluno com matrícula gerada automaticamente.
 func (s *StudentService) CreateStudent(student *models.Student) error {
-	// Validação: Matrícula, nome e ano atual são obrigatórios
-	if student.Enrollment == "" || student.Name == "" || student.CurrentYear == 0 {
-		return errors.New("matrícula, nome e ano atual do aluno são obrigatórios")
+	// 1. Validar o turno (Shift)
+	student.Shift = strings.ToUpper(student.Shift)
+	if student.Shift != "M" && student.Shift != "T" && student.Shift != "N" {
+		return fmt.Errorf("turno inválido: %s. Deve ser 'M' (Manhã), 'T' (Tarde) ou 'N' (Noite)", student.Shift)
 	}
 
-	// Validação: Matrícula já existe (assumindo que seja UNIQUE)
-	// Para isso, precisaríamos de um método GetStudentByEnrollment no repositório.
-	// Por simplicidade, vamos pular essa validação por enquanto ou assumir que o DB cuida dela.
-	// Se a matrícula for UNIQUE no DB, o s.studentRepo.CreateStudent retornará erro.
+	// 2. Obter o ano atual
+	currentYear := time.Now().Year()
 
-	// Validação: Verificar se todas as matérias existem
-	for i, sub := range student.Subjects {
-		if sub.ID == "" {
-			return errors.New("ID da matéria não pode ser vazio")
+	// 3. Buscar a última matrícula para o ano e turno atuais
+	lastEnrollment, err := s.studentRepo.GetLastEnrollmentForYearAndShift(currentYear, student.Shift)
+	if err != nil {
+		return fmt.Errorf("erro ao buscar última matrícula: %v", err)
+	}
+
+	// 4. Gerar a nova matrícula
+	newSequence := 1
+	if lastEnrollment != "" {
+		if len(lastEnrollment) >= 5 {
+			seqStr := lastEnrollment[len(lastEnrollment)-4:]
+			lastSequence, err := strconv.Atoi(seqStr)
+			if err == nil {
+				newSequence = lastSequence + 1
+			} else {
+				log.Printf("Aviso: Não foi possível converter sequência '%s' para int. Reiniciando sequência para 1. Erro: %v", seqStr, err)
+			}
 		}
-		foundSub, err := s.subjectRepo.GetSubjectByID(sub.ID)
-		if err != nil {
-			return fmt.Errorf("erro ao verificar matéria %s: %w", sub.ID, err)
-		}
-		if foundSub == nil {
-			return fmt.Errorf("matéria com ID %s não encontrada", sub.ID)
-		}
-		// Atualiza a matéria no modelo do aluno com os dados completos do DB
-		student.Subjects[i] = *foundSub
+	}
+
+	// Formata a nova matrícula (ex: 2025M0001)
+	student.Enrollment = fmt.Sprintf("%d%s%04d", currentYear, student.Shift, newSequence)
+
+	// Define o CurrentYear como o ano atual (pode ser ajustado depois pelo frontend/admin)
+	if student.CurrentYear == 0 {
+		student.CurrentYear = 1
 	}
 
 	return s.studentRepo.CreateStudent(student)
@@ -55,130 +67,68 @@ func (s *StudentService) CreateStudent(student *models.Student) error {
 
 // GetStudentByID busca um aluno pelo ID.
 func (s *StudentService) GetStudentByID(id string) (*models.Student, error) {
-	student, err := s.studentRepo.GetStudentByID(id)
-	if err != nil {
-		return nil, fmt.Errorf("erro ao buscar aluno: %w", err)
-	}
-	if student == nil {
-		return nil, errors.New("aluno não encontrado")
-	}
-	return student, nil
+	return s.studentRepo.GetStudentByID(id)
 }
 
 // GetAllStudents busca todos os alunos.
 func (s *StudentService) GetAllStudents() ([]models.Student, error) {
-	students, err := s.studentRepo.GetAllStudents()
-	if err != nil {
-		return nil, fmt.Errorf("erro ao buscar todos os alunos: %w", err)
-	}
-	return students, nil
+	return s.studentRepo.GetAllStudents()
 }
 
-// UpdateStudent atualiza um aluno existente após validações.
+// UpdateStudent atualiza um aluno existente.
 func (s *StudentService) UpdateStudent(student *models.Student) error {
 	if student.ID == "" {
 		return errors.New("ID do aluno é obrigatório para atualização")
 	}
-	if student.Enrollment == "" || student.Name == "" || student.CurrentYear == 0 {
-		return errors.New("matrícula, nome e ano atual do aluno são obrigatórios para atualização")
+	if student.Name == "" || student.CurrentYear == 0 || student.Shift == "" { // CORRIGIDO: Valida o Shift aqui também
+		return errors.New("nome, ano atual e turno do aluno são obrigatórios para atualização")
 	}
 
-	// Validação: o aluno deve existir para ser atualizado
 	existingStudent, err := s.studentRepo.GetStudentByID(student.ID)
 	if err != nil {
-		return fmt.Errorf("erro ao verificar aluno para atualização: %w", err)
+		return fmt.Errorf("erro ao buscar aluno existente para atualização: %w", err)
 	}
 	if existingStudent == nil {
-		return errors.New("aluno não encontrado para atualização")
+		return fmt.Errorf("aluno com ID %s não encontrado para atualização", student.ID)
 	}
 
-	// A atualização de matérias associadas não é feita aqui diretamente,
-	// mas sim pelas funções AddSubjectToStudent/RemoveSubjectFromStudent.
-	// O Slice student.Subjects que vem no DTO de update será ignorado aqui
-	// e precisa de handlers e serviços separados para ser modificado.
+	// ATUALIZADO: Copia os campos atualizáveis do 'student' (DTO de entrada) para 'existingStudent'
+	existingStudent.Name = student.Name
+	existingStudent.CurrentYear = student.CurrentYear
+	existingStudent.Shift = strings.ToUpper(student.Shift) // CORRIGIDO: Copia o turno e garante maiúscula
+	// A matrícula (Enrollment) é gerada na criação e não deve ser alterada aqui.
+	// Ela já é parte do 'existingStudent' buscado do DB.
 
-	return s.studentRepo.UpdateStudent(student)
+	return s.studentRepo.UpdateStudent(existingStudent)
 }
 
 // DeleteStudent deleta um aluno pelo ID.
 func (s *StudentService) DeleteStudent(id string) error {
-	if id == "" {
-		return errors.New("ID do aluno é obrigatório para exclusão")
-	}
-	// Validação: o aluno deve existir para ser deletado
-	existingStudent, err := s.studentRepo.GetStudentByID(id)
-	if err != nil {
-		return fmt.Errorf("erro ao verificar aluno para exclusão: %w", err)
-	}
-	if existingStudent == nil {
-		return errors.New("aluno não encontrado para exclusão")
-	}
-
 	return s.studentRepo.DeleteStudent(id)
 }
 
-// AddSubjectToStudent adiciona uma matéria a um aluno, com validações.
+// AddSubjectToStudent associa uma matéria a um aluno.
 func (s *StudentService) AddSubjectToStudent(studentID, subjectID string) error {
-	if studentID == "" || subjectID == "" {
-		return errors.New("IDs de aluno e matéria são obrigatórios")
-	}
-
-	// Valida se o aluno existe
 	student, err := s.studentRepo.GetStudentByID(studentID)
 	if err != nil {
-		return fmt.Errorf("erro ao verificar aluno: %w", err)
+		return fmt.Errorf("erro ao buscar aluno: %w", err)
 	}
 	if student == nil {
-		return errors.New("aluno não encontrado")
+		return fmt.Errorf("aluno com ID %s não encontrado", studentID)
 	}
 
-	// Valida se a matéria existe
 	subject, err := s.subjectRepo.GetSubjectByID(subjectID)
 	if err != nil {
-		return fmt.Errorf("erro ao verificar matéria: %w", err)
+		return fmt.Errorf("erro ao buscar matéria: %w", err)
 	}
 	if subject == nil {
-		return errors.New("matéria não encontrada")
-	}
-
-	// Verifica se a matéria já está associada ao aluno
-	for _, sub := range student.Subjects {
-		if sub.ID == subjectID {
-			return errors.New("matéria já associada a este aluno")
-		}
+		return fmt.Errorf("matéria com ID %s não encontrada", subjectID)
 	}
 
 	return s.studentRepo.AddSubjectToStudent(studentID, subjectID)
 }
 
-// RemoveSubjectFromStudent remove uma matéria de um aluno, com validações.
+// RemoveSubjectFromStudent desassocia uma matéria de um aluno.
 func (s *StudentService) RemoveSubjectFromStudent(studentID, subjectID string) error {
-	if studentID == "" || subjectID == "" {
-		return errors.New("IDs de aluno e matéria são obrigatórios")
-	}
-
-	// Valida se o aluno existe
-	student, err := s.studentRepo.GetStudentByID(studentID)
-	if err != nil {
-		return fmt.Errorf("erro ao verificar aluno: %w", err)
-	}
-	if student == nil {
-		return errors.New("aluno não encontrado")
-	}
-
-	// Não é estritamente necessário validar se a matéria existe aqui,
-	// pois o repositório cuidará de não remover o que não existe.
-	// Mas podemos validar se a associação existe para dar um erro mais específico.
-	found := false
-	for _, sub := range student.Subjects {
-		if sub.ID == subjectID {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return errors.New("matéria não associada a este aluno")
-	}
-
 	return s.studentRepo.RemoveSubjectFromStudent(studentID, subjectID)
 }
