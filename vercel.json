@@ -1,0 +1,45 @@
+{
+    "rewrites": [
+      {
+        "source": "/api/:match*",
+        "destination": "/api"
+      }
+    ],
+    "headers": [
+      {
+        "source": "/api/(.*)",
+        "headers": [
+          { "key": "Access-Control-Allow-Origin", "value": "*" },
+          { "key": "Access-Control-Allow-Methods", "value": "GET,POST,PUT,DELETE,OPTIONS" },
+          { "key": "Access-Control-Allow-Headers", "value": "Content-Type" }
+        ]
+      }
+    ],
+    "builds": [
+      {
+        "src": "api/main.go",
+        "use": "@vercel/go",
+        "config": {
+          "maxLambdaSize": "50mb",
+          "zeroConfig": true
+        }
+      },
+      {
+        "src": "frontend/package.json",
+        "use": "@vercel/node@3",
+        "config": {
+          "zeroConfig": true
+        }
+      }
+    ],
+    "routes": [
+      {
+        "src": "/api/(.*)",
+        "dest": "api/main.go"
+      },
+      {
+        "src": "/(.*)",
+        "dest": "frontend/$1"
+      }
+    ]
+  }
