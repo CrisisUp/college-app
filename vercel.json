@@ -17,7 +17,7 @@
     ],
     "builds": [
       {
-        "src": "api/main.go",
+        "src": "api/index.go",
         "use": "@vercel/go",
         "config": {
           "maxLambdaSize": "50mb",
@@ -35,7 +35,7 @@
     "routes": [
       {
         "src": "/api/(.*)",
-        "dest": "api/main.go"
+        "dest": "api/index.go"  
       },
       {
         "src": "/(.*)",
